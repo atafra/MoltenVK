@@ -2803,6 +2803,62 @@ uint32_t MVKRayTracingPipeline::getRayTracingDispatchBufferIndex() const {
 	return getImplicitBufferIndex(kMVKRayTracingDispatchBufferOffset);
 }
 
+// Rewrites a copy of a SPIR-V module so that its ray generation entry point of the given name
+// is a compute one, which a launch runs a thread of the grid for each ray of: the LaunchId and
+// LaunchSize builtins of the shader become the thread's position in the grid and the grid's
+// size. Returns false where the shader reads its shader binding table record, which a compute
+// kernel has none of, or the module cannot take the entry point.
+static bool getRayGenerationKernelSPIRV(const uint32_t* words, size_t wordCount, const char* name,
+										std::vector<uint32_t>& kernel) {
+	if (!words || wordCount < 5 || words[0] != spv::MagicNumber) { return false; }
+	const uint32_t version = words[1];
+	size_t entryPoint = 0, entryPointEnd = 0;
+	uint32_t function = 0;
+	std::vector<uint32_t> interfaces;
+	std::vector<uint32_t> shaderRecords;
+	auto nameMatches = [&](size_t word, size_t end) {
+		const char* text = reinterpret_cast<const char*>(&words[word]);
+		size_t maxLength = (end - word) * sizeof(uint32_t);
+		size_t length = strnlen(text, maxLength);
+		return length < maxLength && strcmp(text, name) == 0 ? word + length / sizeof(uint32_t) + 1 : 0;
+	};
+	for (size_t word = 5; word < wordCount;) {
+		uint32_t count = words[word] >> 16;
+		if (!count || word + count > wordCount) { return false; }
+		spv::Op op = static_cast<spv::Op>(words[word] & 0xffff);
+		if (op == spv::OpEntryPoint && count >= 4) {
+			auto model = static_cast<spv::ExecutionModel>(words[word + 1]);
+			size_t interfaceWord = nameMatches(word + 3, word + count);
+			if (interfaceWord && model == spv::ExecutionModelGLCompute) { return false; }
+			if (interfaceWord && model == spv::ExecutionModelRayGenerationKHR) {
+				entryPoint = word;
+				function = words[word + 2];
+				interfaces.assign(words + interfaceWord, words + word + count);
+			}
+			entryPointEnd = word + count;
+		} else if (op == spv::OpVariable && count >= 4 &&
+				   words[word + 3] == spv::StorageClassShaderRecordBufferKHR) {
+			shaderRecords.push_back(words[word + 2]);
+		}
+		word += count;
+	}
+	if (!entryPoint) { return false; }
+	// Before SPIR-V 1.4, an entry point lists only its inputs and outputs
+	for (uint32_t record : shaderRecords) {
+		if (version < 0x10400 || std::find(interfaces.begin(), interfaces.end(), record) != interfaces.end()) {
+			return false;
+		}
+	}
+
+	kernel.assign(words, words + entryPointEnd);
+	kernel[entryPoint + 1] = spv::ExecutionModelGLCompute;
+	const uint32_t localSize[] = {
+		(6u << 16) | spv::OpExecutionMode, function, spv::ExecutionModeLocalSize, 1, 1, 1 };
+	kernel.insert(kernel.end(), std::begin(localSize), std::end(localSize));
+	kernel.insert(kernel.end(), words + entryPointEnd, words + wordCount);
+	return true;
+}
+
 static string getRayGenerationDispatcherMSL(uint32_t rayGenerationTableIndex,
 											 uint32_t functionTableIndex,
 											 uint32_t dispatchIndex,
@@ -3071,7 +3127,56 @@ MVKRayTracingPipeline::MVKRayTracingPipeline(MVKDevice* device,
 		return function;
 	};
 
+	// A pipeline that runs its ray generation shader alone, as no shader of it traces a ray or
+	// calls a callable shader, runs that shader as a compute kernel, which takes its resources as
+	// any compute kernel does, rather than calling it as a visible function from a dispatcher.
+	uint32_t rayGenerationStage = VK_SHADER_UNUSED_KHR;
+	std::vector<uint32_t> rayGenerationKernelSPIRV;
+	if (!_isLibrary && !linksLibraries && !_usesTraceRay && !_usesExecuteCallable) {
+		for (uint32_t i = 0; i < pCreateInfo->stageCount; i++) {
+			if (pCreateInfo->pStages[i].stage != VK_SHADER_STAGE_RAYGEN_BIT_KHR) { continue; }
+			rayGenerationStage = rayGenerationStage == VK_SHADER_UNUSED_KHR ? i : pCreateInfo->stageCount;
+		}
+		if (rayGenerationStage < pCreateInfo->stageCount) {
+			auto [words, wordCount] = stageSPIRV(rayGenerationStage);
+			if (!getRayGenerationKernelSPIRV(words, wordCount, pCreateInfo->pStages[rayGenerationStage].pName,
+											 rayGenerationKernelSPIRV)) {
+				rayGenerationStage = VK_SHADER_UNUSED_KHR;
+			}
+		} else {
+			rayGenerationStage = VK_SHADER_UNUSED_KHR;
+		}
+	}
+	_runsRayGenerationAsKernel = rayGenerationStage != VK_SHADER_UNUSED_KHR;
+	auto compileRayGenerationKernel = [&]() {
+		VkShaderModuleCreateInfo moduleInfo = {};
+		moduleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+		moduleInfo.codeSize = rayGenerationKernelSPIRV.size() * sizeof(uint32_t);
+		moduleInfo.pCode = rayGenerationKernelSPIRV.data();
+		VkPipelineShaderStageCreateInfo stageInfo = pCreateInfo->pStages[rayGenerationStage];
+		stageInfo.pNext = &moduleInfo;
+		stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+		stageInfo.module = VK_NULL_HANDLE;
+		VkPipelineCreationFeedback* stageFeedback = feedbackInfo && rayGenerationStage < feedbackInfo->pipelineStageCreationFeedbackCount
+			? &feedbackInfo->pPipelineStageCreationFeedbacks[rayGenerationStage] : nullptr;
+		_module = nullptr;
+		_ownsModule = false;
+		MVKMTLFunction function = getMTLFunction(&stageInfo, spv::ExecutionModelGLCompute, stageFeedback);
+		if (_ownsModule) { delete _module; }
+		_module = nullptr;
+		_ownsModule = false;
+		return function;
+	};
+
 	for (uint32_t i = 0; i < pCreateInfo->stageCount; i++) {
+		if (_runsRayGenerationAsKernel) {
+			ShaderStage stage = { pCreateInfo->pStages[i].stage,
+								  i == rayGenerationStage ? compileRayGenerationKernel() : MVKMTLFunctionNull,
+								  MVKMTLFunctionNull, MVKMTLFunctionNull };
+			valid = valid && (i != rayGenerationStage || stage.function.getMTLFunction());
+			_shaderStages.push_back(stage);
+			continue;
+		}
 		spv::ExecutionModel model;
 		switch (pCreateInfo->pStages[i].stage) {
 			case VK_SHADER_STAGE_RAYGEN_BIT_KHR: model = spv::ExecutionModelRayGenerationKHR; break;
@@ -3245,6 +3350,21 @@ MVKRayTracingPipeline::MVKRayTracingPipeline(MVKDevice* device,
 		return;
 	}
 	if (_isLibrary) {
+		finishFeedback();
+		return;
+	}
+	if (_runsRayGenerationAsKernel) {
+		MTLComputePipelineDescriptor* descriptor = [MTLComputePipelineDescriptor new];	// temp retain
+		descriptor.computeFunction = _shaderStages[rayGenerationStage].function.getMTLFunction();
+		setMetalObjectLabel(descriptor, _layout->getDebugName());
+		MVKComputePipelineCompiler* compiler = new MVKComputePipelineCompiler(this);
+		_mtlPipelineState = compiler->newMTLComputePipelineState(descriptor);	// retained
+		compiler->destroy();
+		[descriptor release];														// temp release
+		if (!_mtlPipelineState) { _hasValidMTLPipelineStates = false; }
+		// An indirect launch runs a threadgroup for each ray (see MVKCmdTraceRays::encode())
+		_mtlThreadgroupSize = MTLSizeMake(1, 1, 1);
+		verifyImplicitBuffers(_stageResources.implicitBuffers, "Ray generation", _descriptorBufferCounts.stages[kMVKShaderStageCompute], this);
 		finishFeedback();
 		return;
 	}

@@ -557,6 +557,8 @@ public:
 	uint32_t getRayTracingDispatchBufferIndex() const;
 	uint32_t getRayTracingPipelineFlags() const;
 	bool usesIntersectionFunctionBuffer() const { return _usesIFB; }
+	/** Returns whether the ray generation shader runs as a compute kernel, which no other shader of the pipeline is called from. */
+	bool runsRayGenerationAsKernel() const { return _runsRayGenerationAsKernel; }
 	/** Returns the threadgroup size for a launch of the given size. */
 	MTLSize getLaunchThreadgroupSize(MTLSize launchSize) const;
 	~MVKRayTracingPipeline() override;
@@ -591,6 +593,7 @@ private:
 	bool _isLibrary = false;
 	bool _usesIFB = false;
 	bool _usesProceduralIFB = false;
+	bool _runsRayGenerationAsKernel = false;
 	id<MTLVisibleFunctionTable> _mtlFunctionTable = nil;
 	id<MTLVisibleFunctionTable> _mtlRayGenerationFunctionTable = nil;
 	id<MTLVisibleFunctionTable> _mtlIntersectionFunctionTable = nil;

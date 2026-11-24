@@ -174,6 +174,22 @@ VkResult MVKCmdTraceRays::setShaderBindingTables(
 void MVKCmdTraceRays::encode(MVKCommandEncoder* cmdEncoder) {
 	if (!_mtlIndirectBuffer && (!_threads.width || !_threads.height || !_threads.depth)) { return; }
 	auto* pipeline = static_cast<MVKRayTracingPipeline*>(cmdEncoder->getRayTracingPipeline());
+
+	// A ray generation shader that runs as a compute kernel takes its resources as a compute
+	// kernel does, with a thread of the grid for each ray of the launch. The command of an
+	// indirect launch, its width, height and depth, is the grid as threadgroups of a thread.
+	if (pipeline->runsRayGenerationAsKernel()) {
+		cmdEncoder->finalizeRayTracingDispatchState();
+		id<MTLComputeCommandEncoder> mtlEncoder = cmdEncoder->getMTLComputeEncoder(kMVKCommandUseTraceRays);
+		if (_mtlIndirectBuffer) {
+			[mtlEncoder dispatchThreadgroupsWithIndirectBuffer:_mtlIndirectBuffer
+										 indirectBufferOffset:_mtlIndirectBufferOffset
+										threadsPerThreadgroup:pipeline->getThreadgroupSize()];
+		} else {
+			[mtlEncoder dispatchThreads:_threads threadsPerThreadgroup:pipeline->getLaunchThreadgroupSize(_threads)];
+		}
+		return;
+	}
 	const MVKMTLBufferAllocation* indirectDispatch = nullptr;
 	if (_mtlIndirectBuffer) {
 		indirectDispatch = cmdEncoder->getTempMTLBuffer(sizeof(MTLDispatchThreadgroupsIndirectArguments), true);
