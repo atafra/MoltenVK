@@ -88,7 +88,9 @@ extensions will be advertised. A value of zero means no extensions will be adver
 ##### Default: `0`
 
 Enables experimental support for `VK_KHR_acceleration_structure`, `VK_KHR_pipeline_library`,
-`VK_KHR_ray_query`, `VK_KHR_ray_tracing_maintenance1`, and `VK_KHR_ray_tracing_pipeline`.
+`VK_KHR_ray_query`, `VK_KHR_ray_tracing_maintenance1`, `VK_KHR_ray_tracing_pipeline`, and
+`VK_EXT_ray_tracing_invocation_reorder`. Hit objects are traced without reordering the threads,
+and their shaders cannot be executed.
 This option is intended for development and testing. Acceleration structures may use standalone
 Metal storage and do not support general partial-overlap buffer aliasing. Serialization retains
 a compact copy of build inputs, which adds build bandwidth and resident memory.

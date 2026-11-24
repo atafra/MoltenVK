@@ -114,6 +114,7 @@ MVK_DEVICE_FEATURE_EXTN(NestedCommandBuffer,              NESTED_COMMAND_BUFFER,
 MVK_DEVICE_FEATURE_EXTN(NonSeamlessCubeMap,               NON_SEAMLESS_CUBE_MAP,                EXT,   1)
 MVK_DEVICE_FEATURE_EXTN(PrimitiveTopologyListRestart,     PRIMITIVE_TOPOLOGY_LIST_RESTART,      EXT,   2)
 MVK_DEVICE_FEATURE_EXTN(ProvokingVertex,                  PROVOKING_VERTEX,                     EXT,   2)
+MVK_DEVICE_FEATURE_EXTN(RayTracingInvocationReorder,      RAY_TRACING_INVOCATION_REORDER,       EXT,   1)
 MVK_DEVICE_FEATURE_EXTN(ShaderAtomicFloat,                SHADER_ATOMIC_FLOAT,                  EXT,  12)
 MVK_DEVICE_FEATURE_EXTN(TexelBufferAlignment,             TEXEL_BUFFER_ALIGNMENT,               EXT,   1)
 MVK_DEVICE_FEATURE_EXTN(Ycbcr2Plane444Formats,            YCBCR_2_PLANE_444_FORMATS,            EXT,   1)

@@ -34,6 +34,7 @@ Released TBD
   - Acceleration-structure builds for triangles and axis-aligned bounding boxes
   - Indexed instance descriptors on Metal 3.0 and indirect descriptors on Metal 3.1+
   - Refit, copy, compaction, serialization, and build size queries
+  - `VK_EXT_ray_tracing_invocation_reorder` for tracing hit objects, without reordering and without executing their shaders
   - Enable with `MVK_CONFIG_ENABLE_EXPERIMENTAL_RAY_TRACING=1`
 - Update `MVK_PRIVATE_API_VERSION` to version `44`.
 

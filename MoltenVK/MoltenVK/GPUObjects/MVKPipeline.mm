@@ -2809,7 +2809,9 @@ uint32_t MVKRayTracingPipeline::getRayTracingDispatchBufferIndex() const {
 // Rewrites a copy of a SPIR-V module so that its ray generation entry point of the given name
 // is a compute one, which a launch runs a thread of the grid for each ray of: the LaunchId and
 // LaunchSize builtins of the shader become the thread's position in the grid and the grid's
-// size. Returns false where the shader reads its shader binding table record, which a compute
+// size. A hit object that the shader traces runs no shader with the payload of its ray, which
+// is a variable of the kernel alone, as is that of any ray that the module traces elsewhere.
+// Returns false where the shader reads its shader binding table record, which a compute
 // kernel has none of, or the module cannot take the entry point.
 static bool getRayGenerationKernelSPIRV(const uint32_t* words, size_t wordCount, const char* name,
 										std::vector<uint32_t>& kernel) {
@@ -2859,6 +2861,18 @@ static bool getRayGenerationKernelSPIRV(const uint32_t* words, size_t wordCount,
 		(6u << 16) | spv::OpExecutionMode, function, spv::ExecutionModeLocalSize, 1, 1, 1 };
 	kernel.insert(kernel.end(), std::begin(localSize), std::end(localSize));
 	kernel.insert(kernel.end(), words + entryPointEnd, words + wordCount);
+	auto isRayData = [](uint32_t storageClass) {
+		return storageClass == spv::StorageClassRayPayloadKHR || storageClass == spv::StorageClassCallableDataKHR;
+	};
+	for (size_t word = 5; word < kernel.size(); word += kernel[word] >> 16) {
+		uint32_t count = kernel[word] >> 16;
+		spv::Op op = static_cast<spv::Op>(kernel[word] & 0xffff);
+		if (op == spv::OpTypePointer && count >= 4 && isRayData(kernel[word + 2])) {
+			kernel[word + 2] = spv::StorageClassPrivate;
+		} else if (op == spv::OpVariable && count >= 4 && isRayData(kernel[word + 3])) {
+			kernel[word + 3] = spv::StorageClassPrivate;
+		}
+	}
 	return true;
 }
 
@@ -2988,6 +3002,7 @@ MVKRayTracingPipeline::MVKRayTracingPipeline(MVKDevice* device,
 		pCreateInfo->pGroups + pCreateInfo->groupCount, [](const auto& group) {
 			return group.type == VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR;
 		});
+	bool tracesHitObjects = false, executesHitObjects = false;
 	for (uint32_t i = 0; i < pCreateInfo->stageCount; i++) {
 		bool callableStage = pCreateInfo->pStages[i].stage == VK_SHADER_STAGE_CALLABLE_BIT_KHR;
 		auto [words, wordCount] = stageSPIRV(i);
@@ -3014,9 +3029,26 @@ MVKRayTracingPipeline::MVKRayTracingPipeline(MVKDevice* device,
 			spv::Op op = static_cast<spv::Op>(words[word] & 0xffff);
 			_usesTraceRay |= op == spv::OpTraceRayKHR;
 			_usesExecuteCallable |= op == spv::OpExecuteCallableKHR;
+			tracesHitObjects |= op == spv::OpHitObjectTraceRayEXT || op == spv::OpHitObjectTraceRayMotionEXT;
+			executesHitObjects |= op == spv::OpHitObjectExecuteShaderEXT ||
+				op == spv::OpHitObjectReorderExecuteShaderEXT || op == spv::OpHitObjectTraceReorderExecuteEXT ||
+				op == spv::OpHitObjectTraceMotionReorderExecuteEXT;
 			_callableCallsCallable |= callableStage && op == spv::OpExecuteCallableKHR;
 			word += count;
 		}
+	}
+
+	// A hit object is traced by an intersection query, without the shaders of the pipeline: none
+	// can be executed for one, and none can decide about the candidates of its ray.
+	for (uint32_t i = 0; tracesHitObjects && !executesHitObjects && i < pCreateInfo->groupCount; i++) {
+		executesHitObjects = pCreateInfo->pGroups[i].anyHitShader != VK_SHADER_UNUSED_KHR ||
+			pCreateInfo->pGroups[i].intersectionShader != VK_SHADER_UNUSED_KHR;
+	}
+	if (executesHitObjects) {
+		setConfigurationResult(reportError(VK_ERROR_FEATURE_NOT_PRESENT,
+			"Ray tracing pipelines that execute shaders for hit objects, or trace hit objects with any-hit or intersection shaders, are not supported."));
+		finishFeedback();
+		return;
 	}
 
 	auto stageIs = [&](uint32_t stageIndex, VkShaderStageFlagBits stage) {

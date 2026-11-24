@@ -593,6 +593,13 @@ void MVKPhysicalDevice::getFeatures(VkPhysicalDeviceFeatures2* features) {
 				rayTracingFeatures->rayTraversalPrimitiveCulling = supportsPipeline;
 				break;
 			}
+			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_FEATURES_EXT: {
+				// The shaders of a ray tracing pipeline can trace hit objects and hint at reordering
+				// their threads, which Metal does not do (see the reordering hint of the properties).
+				auto* reorderFeatures = (VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT*)next;
+				reorderFeatures->rayTracingInvocationReorder = supportsRayTracingPipeline();
+				break;
+			}
 			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR: {
 				auto* barycentricFeatures = (VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR*)next;
 				barycentricFeatures->fragmentShaderBarycentric = true;
@@ -1341,6 +1348,14 @@ void MVKPhysicalDevice::getProperties(VkPhysicalDeviceProperties2* properties) {
 				rayTracingProperties->maxRayDispatchInvocationCount = 1u << 30;
 				rayTracingProperties->shaderGroupHandleAlignment = 16;
 				rayTracingProperties->maxRayHitAttributeSize = kMVKMaxRayHitAttributeSize;
+				break;
+			}
+			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_INVOCATION_REORDER_PROPERTIES_EXT: {
+				// The threads of a kernel stay where they are. No shader is executed for a hit object,
+				// so none has a record of the shader binding table to be indexed.
+				auto* reorderProperties = (VkPhysicalDeviceRayTracingInvocationReorderPropertiesEXT*)next;
+				reorderProperties->rayTracingInvocationReorderReorderingHint = VK_RAY_TRACING_INVOCATION_REORDER_MODE_NONE_EXT;
+				reorderProperties->maxShaderBindingTableRecordIndex = 0;
 				break;
 			}
 			case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES: {
@@ -3724,6 +3739,7 @@ void MVKPhysicalDevice::initExtensions() {
 	if (!supportsRayTracingPipeline()) {
 		pWritableExtns->vk_KHR_pipeline_library.enabled = false;
 		pWritableExtns->vk_KHR_ray_tracing_pipeline.enabled = false;
+		pWritableExtns->vk_EXT_ray_tracing_invocation_reorder.enabled = false;
 	}
 	if (!_metalFeatures.accelerationStructures || !_supportsRaytracingFromRender || !MVK_SPIRV_CROSS_RT_PROFILE) {
 		pWritableExtns->vk_KHR_ray_query.enabled = false;
