@@ -2653,6 +2653,9 @@ MVKMTLFunction MVKComputePipeline::getMTLFunction(const VkPipelineShaderStageCre
 	shaderConfig.options.mslOptions.dispatch_base = _allowsDispatchBase;
 	shaderConfig.options.mslOptions.texture_1D_as_2D = mvkCfg.texture1DAs2D;
     shaderConfig.options.mslOptions.fixed_subgroup_size = mvkIsAnyFlagEnabled(pSS->flags, VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT) ? 0 : mtlFeats.maxSubgroupSize;
+	// The Metal compiler inlines the functions of a kernel where that pays. Forced to inline them
+	// all, it spills much more in a large kernel, such as a ray generation shader that runs as one.
+	shaderConfig.options.mslOptions.force_inline_functions = false;
 
 	bool useMetalArgBuff = isUsingMetalArgumentBuffers();
 	shaderConfig.options.mslOptions.argument_buffers = useMetalArgBuff;
@@ -3974,7 +3977,8 @@ namespace SPIRV_CROSS_NAMESPACE {
 				opt.force_fragment_with_side_effects_execution,
 				opt.input_attachment_is_ds_attachment,
 				opt.auto_disable_rasterization,
-				opt.use_fast_math_pragmas);
+				opt.use_fast_math_pragmas,
+				opt.force_inline_functions);
 	}
 
 	template<class Archive>
@@ -4263,7 +4267,7 @@ static size_t mvkValidateCerealArchiveSize(size_t padByteCnt = 0) {
 void mvkValidateCeralArchiveDefinitions() {
 	[[maybe_unused]] size_t missingBytes = 0;
 #if SPIRV_CROSS_MSL_RAY_TRACING_PIPELINE
-	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(6);
+	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(5);
 #elif SPIRV_CROSS_MSL_ACCELERATION_STRUCTURE_DESCRIPTOR_AS_ADDRESS
 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(6);
 #else
@@ -4275,7 +4279,7 @@ void mvkValidateCeralArchiveDefinitions() {
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVWorkgroupSizeDimension>(3);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVEntryPoint>(20);						// Contains string
 #if SPIRV_CROSS_MSL_RAY_TRACING_PIPELINE
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(34);			// Contains string
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(33);			// Contains string
 #elif SPIRV_CROSS_MSL_ACCELERATION_STRUCTURE_DESCRIPTOR_AS_ADDRESS
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(32);			// Contains string
 #else
@@ -4285,7 +4289,7 @@ void mvkValidateCeralArchiveDefinitions() {
 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLResourceBinding>(2);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::DescriptorBinding>();
 #if SPIRV_CROSS_MSL_RAY_TRACING_PIPELINE
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(114);	// Contains collection
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(113);	// Contains collection
 #elif SPIRV_CROSS_MSL_ACCELERATION_STRUCTURE_DESCRIPTOR_AS_ADDRESS
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(112);	// Contains collection
 #else
