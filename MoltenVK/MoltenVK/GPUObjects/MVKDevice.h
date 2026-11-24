@@ -512,6 +512,7 @@ protected:
 	void populateSubgroupProperties(VkPhysicalDeviceVulkan11Properties* pVk11Props);
 	template<typename HostImageCopyProps> void populateHostImageCopyProperties(HostImageCopyProps* pHostImageCopyProps);
 	bool isTier2MetalArgumentBuffers();
+	bool usesMetal3ArgumentBuffersForAllSets();
 	void logGPUInfo();
 
 	MVKInstance* _mvkInstance;

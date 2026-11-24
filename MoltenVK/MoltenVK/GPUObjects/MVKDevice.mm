@@ -918,14 +918,14 @@ void MVKPhysicalDevice::getProperties(VkPhysicalDeviceProperties2* properties) {
 	supportedProps12.shaderInputAttachmentArrayNonUniformIndexingNative		= _metalFeatures.arrayOfTextures;
 	supportedProps12.robustBufferAccessUpdateAfterBind						= _features.robustBufferAccess;
 	supportedProps12.quadDivergentImplicitLod								= false;
-	supportedProps12.maxPerStageDescriptorUpdateAfterBindSamplers			= isTier2 ? maxSamplerCnt : _properties.limits.maxPerStageDescriptorSamplers;
+	supportedProps12.maxPerStageDescriptorUpdateAfterBindSamplers			= isTier2 ? max(maxSamplerCnt, _properties.limits.maxPerStageDescriptorSamplers) : _properties.limits.maxPerStageDescriptorSamplers;
 	supportedProps12.maxPerStageDescriptorUpdateAfterBindUniformBuffers		= isTier2 ? 1e6 : _properties.limits.maxPerStageDescriptorUniformBuffers;
 	supportedProps12.maxPerStageDescriptorUpdateAfterBindStorageBuffers		= isTier2 ? 1e6 : _properties.limits.maxPerStageDescriptorStorageBuffers;
 	supportedProps12.maxPerStageDescriptorUpdateAfterBindSampledImages		= isTier2 ? 1e6 : _properties.limits.maxPerStageDescriptorSampledImages;
 	supportedProps12.maxPerStageDescriptorUpdateAfterBindStorageImages		= isTier2 ? 1e6 : _properties.limits.maxPerStageDescriptorStorageImages;
 	supportedProps12.maxPerStageDescriptorUpdateAfterBindInputAttachments	= _properties.limits.maxPerStageDescriptorInputAttachments;
 	supportedProps12.maxPerStageUpdateAfterBindResources					= isTier2 ? 1e6 : _properties.limits.maxPerStageResources;
-	supportedProps12.maxDescriptorSetUpdateAfterBindSamplers				= isTier2 ? maxSamplerCnt : _properties.limits.maxDescriptorSetSamplers;
+	supportedProps12.maxDescriptorSetUpdateAfterBindSamplers				= isTier2 ? max(maxSamplerCnt, _properties.limits.maxDescriptorSetSamplers) : _properties.limits.maxDescriptorSetSamplers;
 	supportedProps12.maxDescriptorSetUpdateAfterBindUniformBuffers			= isTier2 ? 1e6 : _properties.limits.maxDescriptorSetUniformBuffers;
 	supportedProps12.maxDescriptorSetUpdateAfterBindUniformBuffersDynamic	= isTier2 ? 1e6 : _properties.limits.maxDescriptorSetUniformBuffersDynamic;
 	supportedProps12.maxDescriptorSetUpdateAfterBindStorageBuffers			= isTier2 ? 1e6 : _properties.limits.maxDescriptorSetStorageBuffers;
@@ -1003,7 +1003,8 @@ void MVKPhysicalDevice::getProperties(VkPhysicalDeviceProperties2* properties) {
 	supportedProps14.lineSubPixelPrecisionBits = 4;
 	supportedProps14.maxVertexAttribDivisor = kMVKUndefinedLargeUInt32;
 	supportedProps14.supportsNonZeroFirstInstance = true;
-	supportedProps14.maxPushDescriptors = _properties.limits.maxPerStageResources;
+	// Push descriptors are bound to the stage, never through an argument buffer
+	supportedProps14.maxPushDescriptors = _metalFeatures.maxPerStageBufferCount + _metalFeatures.maxPerStageTextureCount;
 	supportedProps14.dynamicRenderingLocalReadDepthStencilAttachments = true;
 	supportedProps14.dynamicRenderingLocalReadMultisampledAttachments = true;
 	supportedProps14.earlyFragmentMultisampleCoverageAfterSampleCounting = true;
@@ -2863,6 +2864,13 @@ bool MVKPhysicalDevice::isTier2MetalArgumentBuffers() {
 	return _isUsingMetalArgumentBuffers && (_metalFeatures.argumentBuffersTier >= MTLArgumentBuffersTier2);
 }
 
+// Matches the conditions under which pickArgumentBufferMode() in MVKDescriptorSet.mm keeps
+// every descriptor set but a push descriptor set in a Metal 3 argument buffer.
+bool MVKPhysicalDevice::usesMetal3ArgumentBuffersForAllSets() {
+	return isTier2MetalArgumentBuffers() && !_metalFeatures.needsArgumentBufferEncoders &&
+		   _metalFeatures.nativeTextureSwizzle;
+}
+
 // Initializes the physical device features of this instance.
 void MVKPhysicalDevice::initFeatures() {
 	mvkClear(&_features);	// Start with everything cleared
@@ -3014,6 +3022,21 @@ void MVKPhysicalDevice::initLimits() {
 	_properties.limits.maxDescriptorSetSampledImages = (_properties.limits.maxPerStageDescriptorSampledImages * 5);
 	_properties.limits.maxDescriptorSetStorageImages = (_properties.limits.maxPerStageDescriptorStorageImages * 5);
 	_properties.limits.maxDescriptorSetInputAttachments = (_properties.limits.maxPerStageDescriptorInputAttachments * 5);
+
+	// Metal 3 argument buffers hold the resource IDs of their textures and samplers in memory,
+	// which limits neither how many of them a descriptor set holds, nor how many a stage reads.
+	// Every descriptor set but a push descriptor set is such a buffer (see pickArgumentBufferMode()
+	// in MVKDescriptorSet.mm). Only the unique samplers are limited, by maxSamplerAllocationCount.
+	if (usesMetal3ArgumentBuffersForAllSets()) {
+		static constexpr uint32_t maxArgBufDescCnt = 1e6;
+		_properties.limits.maxPerStageDescriptorSamplers = maxArgBufDescCnt;
+		_properties.limits.maxPerStageDescriptorSampledImages = maxArgBufDescCnt;
+		_properties.limits.maxPerStageDescriptorStorageImages = maxArgBufDescCnt;
+		_properties.limits.maxDescriptorSetSamplers = maxArgBufDescCnt;
+		_properties.limits.maxDescriptorSetSampledImages = maxArgBufDescCnt;
+		_properties.limits.maxDescriptorSetStorageImages = maxArgBufDescCnt;
+		_properties.limits.maxPerStageResources = maxArgBufDescCnt;
+	}
 
 	_properties.limits.maxClipDistances = 8;	// Per Apple engineers.
 	_properties.limits.maxCullDistances = 0;	// unsupported
@@ -3576,8 +3599,11 @@ uint32_t MVKPhysicalDevice::getMaxSamplerCount() {
 	}
 }
 
-// Vulkan imposes a minimum maximum of 1024 descriptors per set.
+// Vulkan imposes a minimum maximum of 1024 descriptors per set. Metal 3 argument buffers limit
+// those of a set no more than those of a stage (see initLimits()). A push descriptor set, which
+// is bound to the stage, is limited by maxPushDescriptors.
 uint32_t MVKPhysicalDevice::getMaxPerSetDescriptorCount() {
+	if (usesMetal3ArgumentBuffersForAllSets()) { return 1e6; }
 	return max(4 * (_metalFeatures.maxPerStageBufferCount +
 					_metalFeatures.maxPerStageTextureCount +
 					_metalFeatures.maxPerStageSamplerCount), 1024u);
