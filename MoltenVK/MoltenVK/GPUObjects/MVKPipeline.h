@@ -557,6 +557,8 @@ public:
 	uint32_t getRayTracingDispatchBufferIndex() const;
 	uint32_t getRayTracingPipelineFlags() const;
 	bool usesIntersectionFunctionBuffer() const { return _usesIFB; }
+	/** Returns the threadgroup size for a launch of the given size. */
+	MTLSize getLaunchThreadgroupSize(MTLSize launchSize) const;
 	~MVKRayTracingPipeline() override;
 
 private:

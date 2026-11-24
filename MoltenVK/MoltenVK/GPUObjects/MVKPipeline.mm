@@ -3427,6 +3427,26 @@ MVKRayTracingPipeline::~MVKRayTracingPipeline() {
 	}
 }
 
+// A launch is laid out in threadgroups by its own size, as a fixed shape such as a row of a
+// SIMD-group width leaves most of each threadgroup empty in a narrow dimension. A threadgroup
+// grows by doubling its smallest dimension that the launch still fills, up to two SIMD-groups,
+// so that its threads stay close together in each dimension of the launch.
+MTLSize MVKRayTracingPipeline::getLaunchThreadgroupSize(MTLSize launchSize) const {
+	NSUInteger maxThreads = std::min<NSUInteger>(2 * _mtlPipelineState.threadExecutionWidth,
+												 _mtlPipelineState.maxTotalThreadsPerThreadgroup);
+	NSUInteger size[3] = { 1, 1, 1 };
+	const NSUInteger extent[3] = { launchSize.width, launchSize.height, launchSize.depth };
+	for (NSUInteger threads = 1; 2 * threads <= maxThreads; threads *= 2) {
+		int dim = -1;
+		for (int i = 0; i < 3; i++) {
+			if (2 * size[i] <= extent[i] && (dim < 0 || size[i] < size[dim])) { dim = i; }
+		}
+		if (dim < 0) { break; }
+		size[dim] *= 2;
+	}
+	return MTLSizeMake(size[0], size[1], size[2]);
+}
+
 uint32_t MVKRayTracingPipeline::getRayTracingPipelineFlags() const {
 	uint32_t flags = 0;
 	if (mvkIsAnyFlagEnabled(_flags, VK_PIPELINE_CREATE_2_RAY_TRACING_SKIP_TRIANGLES_BIT_KHR)) {

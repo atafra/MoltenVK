@@ -339,6 +339,6 @@ void MVKCmdTraceRays::encode(MVKCommandEncoder* cmdEncoder) {
 									 indirectBufferOffset:indirectDispatch->_offset
 									threadsPerThreadgroup:pipeline->getThreadgroupSize()];
 	} else {
-		[mtlEncoder dispatchThreads:_threads threadsPerThreadgroup:pipeline->getThreadgroupSize()];
+		[mtlEncoder dispatchThreads:_threads threadsPerThreadgroup:pipeline->getLaunchThreadgroupSize(_threads)];
 	}
 }
