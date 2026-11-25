@@ -2656,6 +2656,8 @@ MVKMTLFunction MVKComputePipeline::getMTLFunction(const VkPipelineShaderStageCre
 	// The Metal compiler inlines the functions of a kernel where that pays. Forced to inline them
 	// all, it spills much more in a large kernel, such as a ray generation shader that runs as one.
 	shaderConfig.options.mslOptions.force_inline_functions = false;
+	// Work around an Apple G17 (Apple10) stack-spill store-to-load ordering hazard across loop exits.
+	shaderConfig.options.mslOptions.fence_loop_exits = getPhysicalDevice()->getMTLDeviceCapabilities().supportsApple10;
 
 	bool useMetalArgBuff = isUsingMetalArgumentBuffers();
 	shaderConfig.options.mslOptions.argument_buffers = useMetalArgBuff;
@@ -4010,7 +4012,8 @@ namespace SPIRV_CROSS_NAMESPACE {
 				opt.input_attachment_is_ds_attachment,
 				opt.auto_disable_rasterization,
 				opt.use_fast_math_pragmas,
-				opt.force_inline_functions);
+				opt.force_inline_functions,
+				opt.fence_loop_exits);
 	}
 
 	template<class Archive>
@@ -4299,11 +4302,11 @@ static size_t mvkValidateCerealArchiveSize(size_t padByteCnt = 0) {
 void mvkValidateCeralArchiveDefinitions() {
 	[[maybe_unused]] size_t missingBytes = 0;
 #if SPIRV_CROSS_MSL_RAY_TRACING_PIPELINE
-	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(5);
+	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(4);
 #elif SPIRV_CROSS_MSL_ACCELERATION_STRUCTURE_DESCRIPTOR_AS_ADDRESS
-	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(6);
+	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(5);
 #else
-	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(9);
+	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::CompilerMSL::Options>(8);
 #endif
 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLShaderInterfaceVariable>();
 	missingBytes += mvkValidateCerealArchiveSize<SPIRV_CROSS_NAMESPACE::MSLResourceBinding>();
@@ -4311,21 +4314,21 @@ void mvkValidateCeralArchiveDefinitions() {
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVWorkgroupSizeDimension>(3);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVEntryPoint>(20);						// Contains string
 #if SPIRV_CROSS_MSL_RAY_TRACING_PIPELINE
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(33);			// Contains string
-#elif SPIRV_CROSS_MSL_ACCELERATION_STRUCTURE_DESCRIPTOR_AS_ADDRESS
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(32);			// Contains string
+#elif SPIRV_CROSS_MSL_ACCELERATION_STRUCTURE_DESCRIPTOR_AS_ADDRESS
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(31);			// Contains string
 #else
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(39);			// Contains string
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionOptions>(38);			// Contains string
 #endif
 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLShaderInterfaceVariable>(3);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLResourceBinding>(2);
 	missingBytes += mvkValidateCerealArchiveSize<mvk::DescriptorBinding>();
 #if SPIRV_CROSS_MSL_RAY_TRACING_PIPELINE
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(113);	// Contains collection
-#elif SPIRV_CROSS_MSL_ACCELERATION_STRUCTURE_DESCRIPTOR_AS_ADDRESS
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(112);	// Contains collection
+#elif SPIRV_CROSS_MSL_ACCELERATION_STRUCTURE_DESCRIPTOR_AS_ADDRESS
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(111);	// Contains collection
 #else
-	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(119);	// Contains collection
+	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionConfiguration>(118);	// Contains collection
 #endif
 	missingBytes += mvkValidateCerealArchiveSize<mvk::SPIRVToMSLConversionResultInfo>(38);		// Contains collection
 	missingBytes += mvkValidateCerealArchiveSize<mvk::MSLSpecializationMacroInfo>(22);			// Contains string
